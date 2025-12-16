@@ -11,33 +11,48 @@ st.set_page_config(page_title="雲端記帳 App", layout="centered")
 # --- 設定區 ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" 
 
-# --- 🆕 CSS 樣式優化 (解決手機跑版 + 螢幕顏色) ---
+# --- CSS 優化 (手機版型 + LCD 螢幕樣式) ---
 st.markdown("""
 <style>
-    /* 1. 強制手機版按鈕不換行 (關鍵修正) */
+    /* 強制手機版按鈕不換行 */
     div[data-testid="column"] {
-        min-width: 0 !important; /* 允許欄位縮到很小，防止被系統強制換行 */
-        flex: 1 !important;      /* 讓欄位平均分配寬度 */
-        padding: 0 2px !important; /* 減少按鈕之間的間距 */
+        min-width: 0 !important;
+        flex: 1 !important;
+        padding: 0 5px !important;
     }
     
-    /* 2. 調整按鈕在手機上的大小 */
+    /* 調整按鈕大小 */
     .stButton button {
-        padding: 0.5rem 0.1rem !important; /* 上下寬一點，左右窄一點 */
-        font-size: 18px !important; /* 字體大一點好按 */
+        width: 100%;
         font-weight: bold !important;
     }
 
-    /* 3. 避免其他區域 (如刪除列表) 被擠壓太嚴重，稍微設個底限 */
-    div[data-testid="stHorizontalBlock"] {
-        gap: 0.3rem !important;
+    /* LCD 螢幕樣式定義 */
+    .lcd-screen {
+        background-color: #262730; 
+        color: #00FF41; 
+        padding: 15px; 
+        border-radius: 8px; 
+        text-align: right; 
+        font-size: 32px; 
+        font-family: 'Courier New', monospace; 
+        font-weight: bold; 
+        margin-top: 5px;
+        margin-bottom: 15px;
+        border: 2px solid #555;
+        box-shadow: inset 0 0 10px #000;
+        text-shadow: 0 0 5px #00FF41; /* 增加一點螢光暈開的感覺 */
+    }
+    
+    .lcd-label {
+        color: #888;
+        font-size: 12px;
+        text-align: right;
+        margin-bottom: -10px;
+        margin-right: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
-
-# --- 初始化 Session State ---
-if 'amount_str' not in st.session_state:
-    st.session_state.amount_str = ""
 
 # --- 1. 連線 Google Sheets 函數 ---
 def connect_to_sheet():
@@ -49,7 +64,6 @@ def connect_to_sheet():
         sheet = client.open_by_url(SHEET_URL).sheet1
         return sheet
     except Exception as e:
-        # 如果你有用暴力解法，請把 try 裡面的內容換成你的金鑰設定
         st.error(f"連線失敗: {e}")
         return None
 
@@ -73,20 +87,16 @@ def save_data(df):
         sheet.clear()
         sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
 
-# --- 2. 計算機按鍵邏輯 ---
-def press_key(key):
-    if key == '=':
-        try:
-            result = str(eval(st.session_state.amount_str))
-            st.session_state.amount_str = result
-        except:
-            st.session_state.amount_str = "Error"
-    elif key == 'C':
-        st.session_state.amount_str = ""
-    elif key == '⌫':
-        st.session_state.amount_str = st.session_state.amount_str[:-1]
-    else:
-        st.session_state.amount_str += str(key)
+# --- 2. 算式計算邏輯 ---
+def safe_calculate(expression):
+    try:
+        # 只允許簡單數學運算字元，防止惡意代碼
+        allowed = "0123456789.+-*/() "
+        if not all(c in allowed for c in str(expression)):
+            return 0
+        return float(eval(str(expression)))
+    except:
+        return 0
 
 # --- 3. Excel 匯出 (維持不變) ---
 def generate_custom_excel(df):
@@ -153,88 +163,44 @@ st.title("💰 DRKKY雲端記帳本")
 df = load_data()
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 (高對比計算機版) ===
+# === 功能一：手動記帳 (鍵盤輸入 + LCD 預覽) ===
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
-    item_input = st.text_input("購物細項", placeholder="例如：午餐")
+    
+    # 欄位配置：細項(左) | 金額輸入(右)
+    col1, col2 = st.columns([2, 1.2])
+    with col1:
+        item_input = st.text_input("購物細項", placeholder="例如：午餐")
+    with col2:
+        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", value="")
 
-    # 🆕 顯示金額 (LCD 螢幕風格：深灰底 + 亮綠字)
-    display_val = st.session_state.amount_str if st.session_state.amount_str else "0"
-    st.markdown(
-        f"""
-        <div style="
-            background-color: #262730; 
-            color: #00FF41; 
-            padding: 15px; 
-            border-radius: 8px; 
-            text-align: right; 
-            font-size: 32px; 
-            font-family: 'Courier New', monospace; 
-            font-weight: bold; 
-            margin-bottom: 10px;
-            border: 2px solid #555;
-            box-shadow: inset 0 0 5px #000;
-        ">
-        {display_val}
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
+    # 即時計算預覽值
+    preview_val = safe_calculate(amount_input)
+    display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
 
-    # --- 計算機按鈕區 ---
-    with st.container():
-        # Row 1
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button('7', use_container_width=True): press_key('7')
-        if c2.button('8', use_container_width=True): press_key('8')
-        if c3.button('9', use_container_width=True): press_key('9')
-        if c4.button('÷', use_container_width=True): press_key('/')
+    # LCD 螢幕顯示區 (顯示計算結果)
+    st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
 
-        # Row 2
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button('4', use_container_width=True): press_key('4')
-        if c2.button('5', use_container_width=True): press_key('5')
-        if c3.button('6', use_container_width=True): press_key('6')
-        if c4.button('×', use_container_width=True): press_key('*')
-
-        # Row 3
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button('1', use_container_width=True): press_key('1')
-        if c2.button('2', use_container_width=True): press_key('2')
-        if c3.button('3', use_container_width=True): press_key('3')
-        if c4.button('-', use_container_width=True): press_key('-')
-
-        # Row 4
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button('C', use_container_width=True): press_key('C')
-        if c2.button('0', use_container_width=True): press_key('0')
-        if c3.button('.', use_container_width=True): press_key('.')
-        if c4.button('+', use_container_width=True): press_key('+')
-
-        # Row 5 (功能鍵)
-        c1, c2, c3 = st.columns([1, 1, 2])
-        if c1.button('⌫', use_container_width=True): press_key('⌫')
-        if c2.button('=', use_container_width=True): press_key('=')
-        
-        # 確認按鈕
-        if c3.button("✅ 確認新增", type="primary", use_container_width=True):
-            try:
-                final_val = float(eval(st.session_state.amount_str))
-                if item_input and final_val > 0:
-                    new_data = pd.DataFrame({
-                        '日期': [date_input],
-                        '購物細項': [item_input],
-                        '金額': [int(final_val)]
-                    })
-                    df = pd.concat([df, new_data], ignore_index=True)
-                    save_data(df)
-                    st.success(f"已儲存：{item_input} ${int(final_val)}")
-                    st.session_state.amount_str = ""
-                    st.rerun()
-                else:
-                    st.error("金額必須大於 0 且有名稱")
-            except:
-                st.error("算式錯誤")
+    if st.button("✅ 確認新增", type="primary", use_container_width=True):
+        if item_input and preview_val > 0:
+            new_data = pd.DataFrame({
+                '日期': [date_input],
+                '購物細項': [item_input],
+                '金額': [int(preview_val)]
+            })
+            df = pd.concat([df, new_data], ignore_index=True)
+            save_data(df)
+            st.success(f"已儲存：{item_input} ${int(preview_val)}")
+            
+            # 使用 session state 強制重新整理並清空欄位有點困難，
+            # 這裡使用 st.rerun() 讓畫面刷新，不過輸入框的字需要手動清除或用進階方法
+            # 簡單起見，我們直接刷新頁面
+            st.rerun()
+        elif preview_val == 0 and amount_input:
+            st.error("算式錯誤，請檢查輸入")
+        else:
+            st.error("請輸入完整的項目名稱與金額")
 
 # === 功能二：匯入雲端發票 ===
 with tab_import:
@@ -286,8 +252,6 @@ if not df.empty:
             st.metric(label=f"{tab_name} 總支出", value=f"${total_amount:,}")
             st.write("📋 **詳細清單**")
             display_df = filtered_df.sort_values('日期', ascending=False).reset_index()
-            
-            # 這裡我們用 4 個欄位，因為上面的 CSS 已經允許欄位變窄，所以這裡也不會爆掉
             h1, h2, h3, h4 = st.columns([2.5, 3.5, 2, 2])
             h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**操作**")
 
