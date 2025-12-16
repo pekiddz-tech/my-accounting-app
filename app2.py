@@ -8,8 +8,13 @@ from oauth2client.service_account import ServiceAccountCredentials
 # 設定頁面
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
-# --- 設定區 (請修改這裡) ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" # <--- 記得換回你的網址
+# --- 設定區 ---
+# 請確認這裡已經是你的正確網址
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" 
+
+# --- 初始化 Session State (這是計算機的記憶體) ---
+if 'amount_str' not in st.session_state:
+    st.session_state.amount_str = ""
 
 # --- 1. 連線 Google Sheets 函數 ---
 def connect_to_sheet():
@@ -30,13 +35,10 @@ def load_data():
         try:
             data = sheet.get_all_records()
             df = pd.DataFrame(data)
-            if df.empty:
-                return pd.DataFrame(columns=['日期', '購物細項', '金額'])
-            # 確保日期格式正確
+            if df.empty: return pd.DataFrame(columns=['日期', '購物細項', '金額'])
             df['日期'] = pd.to_datetime(df['日期']).dt.date
             return df
-        except Exception:
-            return pd.DataFrame(columns=['日期', '購物細項', '金額'])
+        except: return pd.DataFrame(columns=['日期', '購物細項', '金額'])
     return pd.DataFrame(columns=['日期', '購物細項', '金額'])
 
 def save_data(df):
@@ -47,21 +49,27 @@ def save_data(df):
         sheet.clear()
         sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
 
-# --- 2. 輔助功能：計算機邏輯 ---
-def safe_calculate(expression):
-    """
-    將字串算式 (例如 '100+50*2') 轉換為數字
-    """
-    allowed_chars = "0123456789.+-*/() "
-    if not all(char in allowed_chars for char in expression):
-        return None
-    try:
-        # 使用 eval 計算，但只允許數學運算
-        return eval(expression)
-    except:
-        return None
+# --- 2. 計算機邏輯函數 ---
+def press_key(key):
+    # 如果是按下 = 號
+    if key == '=':
+        try:
+            # 計算結果並轉回字串
+            result = str(eval(st.session_state.amount_str))
+            st.session_state.amount_str = result
+        except:
+            st.session_state.amount_str = "Error"
+    # 如果是按下 C (清除)
+    elif key == 'C':
+        st.session_state.amount_str = ""
+    # 如果是按下 ⌫ (倒退嚕)
+    elif key == '⌫':
+        st.session_state.amount_str = st.session_state.amount_str[:-1]
+    # 其他數字或符號
+    else:
+        st.session_state.amount_str += str(key)
 
-# --- 3. 核心功能：Excel 匯出 (維持不變) ---
+# --- 3. Excel 匯出 (維持不變) ---
 def generate_custom_excel(df):
     output = io.BytesIO()
     if df.empty: return None
@@ -82,7 +90,6 @@ def generate_custom_excel(df):
         fmt_money = workbook.add_format({'num_format': '#,##0', 'border': 1})
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#FCE4D6', 'num_format': '#,##0', 'border': 1})
         fmt_title = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
-
         sheet.merge_range('A1:G1', f'{target_year}年 支出清冊', fmt_title)
         current_row = 2
         grand_total = 0
@@ -92,19 +99,10 @@ def generate_custom_excel(df):
             headers = ['日期']
             for m in months: headers.extend([f'{m}月摘要', '金額'])
             for col_num, header in enumerate(headers): sheet.write(current_row, col_num, header, fmt_header)
-            
-            sheet.set_column(0, 0, 5)
-            sheet.set_column(1, 1, 30)
-            sheet.set_column(2, 2, 12)
-            sheet.set_column(3, 3, 30)
-            sheet.set_column(4, 4, 12)
-            sheet.set_column(5, 5, 30)
-            sheet.set_column(6, 6, 12)
-
+            sheet.set_column(0, 0, 5); sheet.set_column(1, 1, 30); sheet.set_column(2, 2, 12)
+            sheet.set_column(3, 3, 30); sheet.set_column(4, 4, 12); sheet.set_column(5, 5, 30); sheet.set_column(6, 6, 12)
             current_row += 1
-            quarter_total = 0
             col_totals = {m: 0 for m in months}
-
             for day in range(1, 32):
                 sheet.write(current_row, 0, day, fmt_date)
                 for i, m in enumerate(months):
@@ -120,58 +118,89 @@ def generate_custom_excel(df):
                         sheet.write(current_row, 2 + i*2, day_sum, fmt_money)
                         col_totals[m] += day_sum
                 current_row += 1
-            
             sheet.write(current_row, 0, "合計", fmt_total)
             for i, m in enumerate(months):
                 sheet.write(current_row, 1 + i*2, "本月小計", fmt_total)
                 sheet.write(current_row, 2 + i*2, col_totals[m], fmt_total)
                 grand_total += col_totals[m]
             current_row += 3
-
         sheet.merge_range(current_row, 0, current_row, 1, '年度總支出', fmt_title)
         sheet.write(current_row, 2, grand_total, fmt_total)
     return output
 
-# --- 4. App 介面開始 ---
-st.title("💰 雲端記帳本")
+# --- 4. App 介面 ---
+st.title("💰 DRKKY雲端記帳本")
 
 df = load_data()
+tab_manual, tab_import = st.tabs(["📝 手動記帳 (附計算機)", "☁️ 匯入雲端發票"])
 
-# 頁籤：手動輸入 vs 匯入發票
-tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
-
-# === 功能一：手動記帳 (欄位已交換) ===
+# === 功能一：手動記帳 (含計算機介面) ===
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
-    
-    # 這裡調整欄位順序與寬度比例：細項(長) | 金額(短)
-    col1, col2 = st.columns([2, 1]) 
-    
-    with col1:
-        item_input = st.text_input("購物細項", placeholder="例如：午餐")
-        
-    with col2:
-        # 改成 text_input 以支援算式
-        amount_str = st.text_input("金額 (可輸入算式)", placeholder="如: 100+50", value="")
+    item_input = st.text_input("購物細項", placeholder="例如：午餐")
 
-    if st.button("新增記錄", use_container_width=True):
-        # 1. 計算金額
-        final_amount = safe_calculate(amount_str)
+    # 顯示目前的金額算式
+    st.markdown(f"##### 💰 金額： **{st.session_state.amount_str if st.session_state.amount_str else '0'}**")
+
+    # --- 計算機按鈕區 ---
+    # 使用 container 包起來比較整齊
+    with st.container():
+        # 定義按鈕排列 (4欄)
+        # 7 8 9 /
+        # 4 5 6 *
+        # 1 2 3 -
+        # C 0 . +
+        # ⌫ = (佔兩格)
         
-        if item_input and final_amount is not None and final_amount > 0:
-            new_data = pd.DataFrame({
-                '日期': [date_input],
-                '購物細項': [item_input],
-                '金額': [int(final_amount)] # 轉成整數存檔
-            })
-            df = pd.concat([df, new_data], ignore_index=True)
-            save_data(df)
-            st.success(f"已儲存：{item_input} ${int(final_amount)}")
-            st.rerun()
-        elif final_amount is None:
-            st.error("金額格式錯誤！請輸入數字或簡單算式 (如 100+50)")
-        else:
-            st.error("請輸入完整的項目名稱與金額！")
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button('7', use_container_width=True): press_key('7')
+        if c2.button('8', use_container_width=True): press_key('8')
+        if c3.button('9', use_container_width=True): press_key('9')
+        if c4.button('÷', use_container_width=True): press_key('/')
+
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button('4', use_container_width=True): press_key('4')
+        if c2.button('5', use_container_width=True): press_key('5')
+        if c3.button('6', use_container_width=True): press_key('6')
+        if c4.button('×', use_container_width=True): press_key('*')
+
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button('1', use_container_width=True): press_key('1')
+        if c2.button('2', use_container_width=True): press_key('2')
+        if c3.button('3', use_container_width=True): press_key('3')
+        if c4.button('-', use_container_width=True): press_key('-')
+
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button('C', use_container_width=True): press_key('C')
+        if c2.button('0', use_container_width=True): press_key('0')
+        if c3.button('.', use_container_width=True): press_key('.')
+        if c4.button('+', use_container_width=True): press_key('+')
+
+        c1, c2, c3 = st.columns([1, 1, 2])
+        if c1.button('⌫', use_container_width=True): press_key('⌫')
+        if c2.button('=', use_container_width=True): press_key('=')
+        
+        # 最大的新增按鈕
+        if c3.button("✅ 確認新增", type="primary", use_container_width=True):
+            # 嘗試計算最終結果
+            try:
+                final_val = float(eval(st.session_state.amount_str))
+                if item_input and final_val > 0:
+                    new_data = pd.DataFrame({
+                        '日期': [date_input],
+                        '購物細項': [item_input],
+                        '金額': [int(final_val)]
+                    })
+                    df = pd.concat([df, new_data], ignore_index=True)
+                    save_data(df)
+                    st.success(f"已儲存：{item_input} ${int(final_val)}")
+                    # 清空輸入
+                    st.session_state.amount_str = ""
+                    st.rerun()
+                else:
+                    st.error("金額必須大於 0")
+            except:
+                st.error("金額算式錯誤，請按 C 清除重試")
 
 # === 功能二：匯入雲端發票 (維持不變) ===
 with tab_import:
@@ -181,8 +210,6 @@ with tab_import:
         try:
             try: import_df = pd.read_csv(uploaded_file, encoding='utf-8')
             except: import_df = pd.read_csv(uploaded_file, encoding='cp950')
-            
-            st.dataframe(import_df.head(3))
             all_columns = import_df.columns.tolist()
             c1, c2, c3 = st.columns(3)
             with c1: col_date = st.selectbox("日期欄位", all_columns)
@@ -200,85 +227,62 @@ with tab_import:
                         if amt > 0:
                             new_records.append({'日期': d, '購物細項': item_name, '金額': int(amt)})
                     except: continue
-                
                 if new_records:
                     new_df = pd.DataFrame(new_records)
                     df = pd.concat([df, new_df], ignore_index=True)
                     save_data(df)
-                    st.success(f"成功匯入 {len(new_records)} 筆！")
-                    st.rerun()
+                    st.success(f"成功匯入 {len(new_records)} 筆！"); st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
 
-# --- 5. 數據統計與顯示 (新版：今日/本周/本月) ---
+# --- 5. 數據統計與顯示 ---
 st.markdown("---")
 st.subheader("📊 帳務總覽")
 
 if not df.empty:
-    # 準備日期變數
     today = datetime.now().date()
-    start_of_week = today - timedelta(days=today.weekday()) # 週一為開始
-    start_of_month = today.replace(day=1)
-
+    start_of_week = today - timedelta(days=today.weekday())
+    
     # 建立分頁
     tab1, tab2, tab3 = st.tabs(["📅 今日總計", "🗓️ 本周總計", "📊 本月總計"])
     
-    # 定義一個共用的顯示函數 (避免程式碼重複)
     def display_filtered_records(filtered_df, tab_name):
         if filtered_df.empty:
             st.info(f"{tab_name} 目前沒有消費記錄。")
         else:
             total_amount = filtered_df['金額'].sum()
             st.metric(label=f"{tab_name} 總支出", value=f"${total_amount:,}")
-            
             st.write("📋 **詳細清單**")
-            # 為了要能刪除，我們必須保留原始 index
-            # sort_values 後 reset_index 會產生一個叫 'index' 的欄位保留原始索引
             display_df = filtered_df.sort_values('日期', ascending=False).reset_index()
-
-            # 標題
             h1, h2, h3, h4 = st.columns([2.5, 3.5, 2, 2])
             h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**操作**")
 
-            # 列表
             for i, row in display_df.iterrows():
                 c1, c2, c3, c4 = st.columns([2.5, 3.5, 2, 2])
                 c1.write(f"{row['日期']}")
                 c2.write(f"{row['購物細項']}")
                 c3.write(f"${row['金額']}")
-                
-                # 每個按鈕需要唯一的 key，我們用 tab 名稱 + 原始 index
                 unique_key = f"del_{tab_name}_{row['index']}"
                 if c4.button("刪除", key=unique_key, type="secondary"):
-                    # 使用全域變數 df 和 save_data
                     global df 
-                    df = df.drop(row['index']) # 刪除原始資料
+                    df = df.drop(row['index'])
                     save_data(df)
                     st.warning(f"已刪除：{row['購物細項']}")
                     st.rerun()
 
-    # --- 分頁 1: 今日 ---
     with tab1:
         df_today = df[df['日期'] == today]
         display_filtered_records(df_today, "今日")
-
-    # --- 分頁 2: 本周 ---
     with tab2:
-        # 篩選 >= 週一 且 <= 今天 (或是未來也可以，這邊抓 >= start_of_week)
         df_week = df[df['日期'] >= start_of_week]
         display_filtered_records(df_week, "本周")
-
-    # --- 分頁 3: 本月 ---
     with tab3:
-        # 篩選同一年且同一月
         df['dt_temp'] = pd.to_datetime(df['日期'])
         df_month = df[(df['dt_temp'].dt.year == today.year) & (df['dt_temp'].dt.month == today.month)]
         display_filtered_records(df_month, "本月")
 
     st.markdown("---")
-    # 匯出按鈕
     excel_data = generate_custom_excel(df)
     if excel_data:
         st.download_button("下載年度清冊 (.xlsx)", excel_data.getvalue(), f'年度支出_{datetime.now().strftime("%Y%m%d")}.xlsx', "application/vnd.ms-excel")
-
 else:
     st.info("目前還沒有資料。")
