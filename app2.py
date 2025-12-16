@@ -9,17 +9,39 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
-# 請確認這裡已經是你的正確網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" 
 
-# --- 初始化 Session State (這是計算機的記憶體) ---
+# --- 🆕 CSS 樣式優化 (解決手機跑版 + 螢幕顏色) ---
+st.markdown("""
+<style>
+    /* 1. 強制手機版按鈕不換行 (關鍵修正) */
+    div[data-testid="column"] {
+        min-width: 0 !important; /* 允許欄位縮到很小，防止被系統強制換行 */
+        flex: 1 !important;      /* 讓欄位平均分配寬度 */
+        padding: 0 2px !important; /* 減少按鈕之間的間距 */
+    }
+    
+    /* 2. 調整按鈕在手機上的大小 */
+    .stButton button {
+        padding: 0.5rem 0.1rem !important; /* 上下寬一點，左右窄一點 */
+        font-size: 18px !important; /* 字體大一點好按 */
+        font-weight: bold !important;
+    }
+
+    /* 3. 避免其他區域 (如刪除列表) 被擠壓太嚴重，稍微設個底限 */
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.3rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 初始化 Session State ---
 if 'amount_str' not in st.session_state:
     st.session_state.amount_str = ""
 
 # --- 1. 連線 Google Sheets 函數 ---
 def connect_to_sheet():
     try:
-        # 如果你有設定 secrets.toml 就會走這裡
         scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -27,7 +49,7 @@ def connect_to_sheet():
         sheet = client.open_by_url(SHEET_URL).sheet1
         return sheet
     except Exception as e:
-        # 如果你是用暴力解法(直接貼金鑰在程式碼裡)，請把上面那段 try 內容換成你上次成功的程式碼
+        # 如果你有用暴力解法，請把 try 裡面的內容換成你的金鑰設定
         st.error(f"連線失敗: {e}")
         return None
 
@@ -131,23 +153,35 @@ st.title("💰 DRKKY雲端記帳本")
 df = load_data()
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 (標準計算機排列) ===
+# === 功能一：手動記帳 (高對比計算機版) ===
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
     item_input = st.text_input("購物細項", placeholder="例如：午餐")
 
-    # 顯示金額 (唯讀，透過按鈕輸入)
+    # 🆕 顯示金額 (LCD 螢幕風格：深灰底 + 亮綠字)
     display_val = st.session_state.amount_str if st.session_state.amount_str else "0"
     st.markdown(
         f"""
-        <div style="background-color:#f0f2f6; padding:10px; border-radius:10px; text-align:right; font-size:24px; font-weight:bold; margin-bottom:10px;">
-        ${display_val}
+        <div style="
+            background-color: #262730; 
+            color: #00FF41; 
+            padding: 15px; 
+            border-radius: 8px; 
+            text-align: right; 
+            font-size: 32px; 
+            font-family: 'Courier New', monospace; 
+            font-weight: bold; 
+            margin-bottom: 10px;
+            border: 2px solid #555;
+            box-shadow: inset 0 0 5px #000;
+        ">
+        {display_val}
         </div>
         """, 
         unsafe_allow_html=True
     )
 
-    # --- 計算機按鈕區 (標準 3x4 + 側邊運算符) ---
+    # --- 計算機按鈕區 ---
     with st.container():
         # Row 1
         c1, c2, c3, c4 = st.columns(4)
@@ -170,22 +204,21 @@ with tab_manual:
         if c3.button('3', use_container_width=True): press_key('3')
         if c4.button('-', use_container_width=True): press_key('-')
 
-        # Row 4 (C, 0, ., +)
+        # Row 4
         c1, c2, c3, c4 = st.columns(4)
         if c1.button('C', use_container_width=True): press_key('C')
         if c2.button('0', use_container_width=True): press_key('0')
         if c3.button('.', use_container_width=True): press_key('.')
         if c4.button('+', use_container_width=True): press_key('+')
 
-        # Row 5 (功能鍵區)
-        c1, c2, c3 = st.columns([1, 1, 2]) # 比例：倒退跟等於比較小，確認鍵比較大
+        # Row 5 (功能鍵)
+        c1, c2, c3 = st.columns([1, 1, 2])
         if c1.button('⌫', use_container_width=True): press_key('⌫')
         if c2.button('=', use_container_width=True): press_key('=')
         
-        # 最大的確認按鈕
+        # 確認按鈕
         if c3.button("✅ 確認新增", type="primary", use_container_width=True):
             try:
-                # 如果使用者最後忘了按等於，這裡幫他算
                 final_val = float(eval(st.session_state.amount_str))
                 if item_input and final_val > 0:
                     new_data = pd.DataFrame({
@@ -196,14 +229,14 @@ with tab_manual:
                     df = pd.concat([df, new_data], ignore_index=True)
                     save_data(df)
                     st.success(f"已儲存：{item_input} ${int(final_val)}")
-                    st.session_state.amount_str = "" # 清空
+                    st.session_state.amount_str = ""
                     st.rerun()
                 else:
                     st.error("金額必須大於 0 且有名稱")
             except:
                 st.error("算式錯誤")
 
-# === 功能二：匯入雲端發票 (維持不變) ===
+# === 功能二：匯入雲端發票 ===
 with tab_import:
     st.markdown("### 批次匯入發票 CSV")
     uploaded_file = st.file_uploader("選擇 CSV 檔案", type=['csv'])
@@ -253,6 +286,8 @@ if not df.empty:
             st.metric(label=f"{tab_name} 總支出", value=f"${total_amount:,}")
             st.write("📋 **詳細清單**")
             display_df = filtered_df.sort_values('日期', ascending=False).reset_index()
+            
+            # 這裡我們用 4 個欄位，因為上面的 CSS 已經允許欄位變窄，所以這裡也不會爆掉
             h1, h2, h3, h4 = st.columns([2.5, 3.5, 2, 2])
             h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**操作**")
 
