@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 (請修改這裡) ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxxxx/edit" # <--- 記得換回你的網址
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" # <--- 記得換回你的網址
 
 # --- 1. 連線 Google Sheets 函數 ---
 def connect_to_sheet():
