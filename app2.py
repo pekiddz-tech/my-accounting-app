@@ -19,6 +19,7 @@ if 'amount_str' not in st.session_state:
 # --- 1. 連線 Google Sheets 函數 ---
 def connect_to_sheet():
     try:
+        # 如果你有設定 secrets.toml 就會走這裡
         scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -26,6 +27,7 @@ def connect_to_sheet():
         sheet = client.open_by_url(SHEET_URL).sheet1
         return sheet
     except Exception as e:
+        # 如果你是用暴力解法(直接貼金鑰在程式碼裡)，請把上面那段 try 內容換成你上次成功的程式碼
         st.error(f"連線失敗: {e}")
         return None
 
@@ -49,23 +51,18 @@ def save_data(df):
         sheet.clear()
         sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
 
-# --- 2. 計算機邏輯函數 ---
+# --- 2. 計算機按鍵邏輯 ---
 def press_key(key):
-    # 如果是按下 = 號
     if key == '=':
         try:
-            # 計算結果並轉回字串
             result = str(eval(st.session_state.amount_str))
             st.session_state.amount_str = result
         except:
             st.session_state.amount_str = "Error"
-    # 如果是按下 C (清除)
     elif key == 'C':
         st.session_state.amount_str = ""
-    # 如果是按下 ⌫ (倒退嚕)
     elif key == '⌫':
         st.session_state.amount_str = st.session_state.amount_str[:-1]
-    # 其他數字或符號
     else:
         st.session_state.amount_str += str(key)
 
@@ -132,58 +129,63 @@ def generate_custom_excel(df):
 st.title("💰 DRKKY雲端記帳本")
 
 df = load_data()
-tab_manual, tab_import = st.tabs(["📝 手動記帳 (附計算機)", "☁️ 匯入雲端發票"])
+tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 (含計算機介面) ===
+# === 功能一：手動記帳 (標準計算機排列) ===
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
     item_input = st.text_input("購物細項", placeholder="例如：午餐")
 
-    # 顯示目前的金額算式
-    st.markdown(f"##### 💰 金額： **{st.session_state.amount_str if st.session_state.amount_str else '0'}**")
+    # 顯示金額 (唯讀，透過按鈕輸入)
+    display_val = st.session_state.amount_str if st.session_state.amount_str else "0"
+    st.markdown(
+        f"""
+        <div style="background-color:#f0f2f6; padding:10px; border-radius:10px; text-align:right; font-size:24px; font-weight:bold; margin-bottom:10px;">
+        ${display_val}
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
-    # --- 計算機按鈕區 ---
-    # 使用 container 包起來比較整齊
+    # --- 計算機按鈕區 (標準 3x4 + 側邊運算符) ---
     with st.container():
-        # 定義按鈕排列 (4欄)
-        # 7 8 9 /
-        # 4 5 6 *
-        # 1 2 3 -
-        # C 0 . +
-        # ⌫ = (佔兩格)
-        
+        # Row 1
         c1, c2, c3, c4 = st.columns(4)
         if c1.button('7', use_container_width=True): press_key('7')
         if c2.button('8', use_container_width=True): press_key('8')
         if c3.button('9', use_container_width=True): press_key('9')
         if c4.button('÷', use_container_width=True): press_key('/')
 
+        # Row 2
         c1, c2, c3, c4 = st.columns(4)
         if c1.button('4', use_container_width=True): press_key('4')
         if c2.button('5', use_container_width=True): press_key('5')
         if c3.button('6', use_container_width=True): press_key('6')
         if c4.button('×', use_container_width=True): press_key('*')
 
+        # Row 3
         c1, c2, c3, c4 = st.columns(4)
         if c1.button('1', use_container_width=True): press_key('1')
         if c2.button('2', use_container_width=True): press_key('2')
         if c3.button('3', use_container_width=True): press_key('3')
         if c4.button('-', use_container_width=True): press_key('-')
 
+        # Row 4 (C, 0, ., +)
         c1, c2, c3, c4 = st.columns(4)
         if c1.button('C', use_container_width=True): press_key('C')
         if c2.button('0', use_container_width=True): press_key('0')
         if c3.button('.', use_container_width=True): press_key('.')
         if c4.button('+', use_container_width=True): press_key('+')
 
-        c1, c2, c3 = st.columns([1, 1, 2])
+        # Row 5 (功能鍵區)
+        c1, c2, c3 = st.columns([1, 1, 2]) # 比例：倒退跟等於比較小，確認鍵比較大
         if c1.button('⌫', use_container_width=True): press_key('⌫')
         if c2.button('=', use_container_width=True): press_key('=')
         
-        # 最大的新增按鈕
+        # 最大的確認按鈕
         if c3.button("✅ 確認新增", type="primary", use_container_width=True):
-            # 嘗試計算最終結果
             try:
+                # 如果使用者最後忘了按等於，這裡幫他算
                 final_val = float(eval(st.session_state.amount_str))
                 if item_input and final_val > 0:
                     new_data = pd.DataFrame({
@@ -194,13 +196,12 @@ with tab_manual:
                     df = pd.concat([df, new_data], ignore_index=True)
                     save_data(df)
                     st.success(f"已儲存：{item_input} ${int(final_val)}")
-                    # 清空輸入
-                    st.session_state.amount_str = ""
+                    st.session_state.amount_str = "" # 清空
                     st.rerun()
                 else:
-                    st.error("金額必須大於 0")
+                    st.error("金額必須大於 0 且有名稱")
             except:
-                st.error("金額算式錯誤，請按 C 清除重試")
+                st.error("算式錯誤")
 
 # === 功能二：匯入雲端發票 (維持不變) ===
 with tab_import:
@@ -242,7 +243,6 @@ if not df.empty:
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     
-    # 建立分頁
     tab1, tab2, tab3 = st.tabs(["📅 今日總計", "🗓️ 本周總計", "📊 本月總計"])
     
     def display_filtered_records(filtered_df, tab_name):
