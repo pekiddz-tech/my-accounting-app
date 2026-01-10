@@ -9,53 +9,26 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
-# 請確認這裡已經是你的正確網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
 
-# --- CSS 優化 (手機版型 + LCD 螢幕樣式) ---
+# --- CSS 優化 ---
 st.markdown("""
 <style>
-    /* 強制手機版按鈕不換行 */
-    div[data-testid="column"] {
-        min-width: 0 !important;
-        flex: 1 !important;
-        padding: 0 5px !important;
-    }
-    
-    /* 調整按鈕大小 */
-    .stButton button {
-        width: 100%;
-        font-weight: bold !important;
-    }
-
-    /* LCD 螢幕樣式定義 */
+    div[data-testid="column"] { min-width: 0 !important; flex: 1 !important; padding: 0 5px !important; }
+    .stButton button { width: 100%; font-weight: bold !important; }
     .lcd-screen {
-        background-color: #262730; 
-        color: #00FF41; 
-        padding: 15px; 
-        border-radius: 8px; 
-        text-align: right; 
-        font-size: 32px; 
-        font-family: 'Courier New', monospace; 
-        font-weight: bold; 
-        margin-top: 5px;
-        margin-bottom: 15px;
-        border: 2px solid #555;
-        box-shadow: inset 0 0 10px #000;
-        text-shadow: 0 0 5px #00FF41;
+        background-color: #262730; color: #00FF41; padding: 15px; 
+        border-radius: 8px; text-align: right; font-size: 32px; 
+        font-family: 'Courier New', monospace; font-weight: bold; 
+        margin-top: 5px; margin-bottom: 15px; border: 2px solid #555;
+        box-shadow: inset 0 0 10px #000; text-shadow: 0 0 5px #00FF41;
     }
-    
-    .lcd-label {
-        color: #888;
-        font-size: 12px;
-        text-align: right;
-        margin-bottom: -10px;
-        margin-right: 5px;
-    }
+    .lcd-label { color: #888; font-size: 12px; text-align: right; margin-bottom: -10px; margin-right: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 連線 Google Sheets 函數 ---
+# --- 1. 連線 Google Sheets (加入快取，讓速度變快！) ---
+@st.cache_resource(ttl=600) # 快取連線物件，避免每次按按鈕都重新連線
 def connect_to_sheet():
     try:
         scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
@@ -68,6 +41,7 @@ def connect_to_sheet():
         st.error(f"連線失敗: {e}")
         return None
 
+# 讀取資料不快取，因為需要即時更新
 def load_data():
     sheet = connect_to_sheet()
     if sheet:
@@ -80,7 +54,8 @@ def load_data():
         except: return pd.DataFrame(columns=['日期', '購物細項', '金額'])
     return pd.DataFrame(columns=['日期', '購物細項', '金額'])
 
-def save_data(df):
+# 存檔函數
+def save_data_to_sheet(df):
     sheet = connect_to_sheet()
     if sheet:
         df_to_save = df.copy()
@@ -88,15 +63,51 @@ def save_data(df):
         sheet.clear()
         sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
 
-# --- 2. 算式計算邏輯 ---
+# --- 2. 核心邏輯函數 ---
 def safe_calculate(expression):
     try:
         allowed = "0123456789.+-*/() "
-        if not all(c in allowed for c in str(expression)):
-            return 0
+        if not all(c in allowed for c in str(expression)): return 0
         return float(eval(str(expression)))
-    except:
-        return 0
+    except: return 0
+
+# --- 🆕 關鍵：新增資料的回呼函數 (Callback) ---
+def add_record_callback():
+    # 從 session_state 抓取目前輸入的值
+    date_val = st.session_state.date_input
+    item_val = st.session_state.input_item
+    amount_str = st.session_state.input_amount
+    
+    # 計算金額
+    calc_val = safe_calculate(amount_str)
+    
+    if item_val and calc_val > 0:
+        # 1. 讀取舊資料
+        current_df = load_data()
+        
+        # 2. 建立新資料
+        new_row = pd.DataFrame({
+            '日期': [date_val],
+            '購物細項': [item_val],
+            '金額': [int(calc_val)]
+        })
+        
+        # 3. 合併並存檔
+        updated_df = pd.concat([current_df, new_row], ignore_index=True)
+        save_data_to_sheet(updated_df)
+        
+        # 4. 設定成功訊息與音效觸發 (存入 Session State 供下一次渲染使用)
+        st.session_state.success_msg = f"已儲存：{item_val} ${int(calc_val)}"
+        st.session_state.trigger_sound_play = True
+        
+        # 5. ✨ 直接清空輸入欄位 (這就是順暢的關鍵)
+        st.session_state.input_item = ""
+        st.session_state.input_amount = ""
+        
+    elif calc_val == 0 and amount_str:
+        st.session_state.error_msg = "算式錯誤，請檢查輸入"
+    else:
+        st.session_state.error_msg = "請輸入完整的項目名稱與金額"
 
 # --- 3. Excel 匯出 ---
 def generate_custom_excel(df):
@@ -160,8 +171,7 @@ def generate_custom_excel(df):
 # --- 4. App 介面開始 ---
 st.title("💰 DRKKY雲端記帳本")
 
-# --- 音效處理邏輯 ---
-# 擴充音效庫
+# --- 音效處理 ---
 SOUND_MAP = {
     "無聲": None,
     "🔔 清脆叮聲": "https://www.soundjay.com/buttons/sounds/button-3.mp3",
@@ -172,74 +182,56 @@ SOUND_MAP = {
     "🎹 鋼琴和弦": "https://www.soundjay.com/buttons/sounds/button-10.mp3"
 }
 
+# 處理音效播放與訊息顯示 (放在最上面)
 if st.session_state.get('trigger_sound_play'):
     sound_url = st.session_state.get('selected_sound_url')
     if sound_url:
-        st.markdown(f"""
-            <audio autoplay style="display:none;">
-                <source src="{sound_url}" type="audio/mpeg">
-            </audio>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
     st.session_state.trigger_sound_play = False
 
-# 載入資料
-df = load_data()
+if st.session_state.get('success_msg'):
+    st.success(st.session_state.success_msg)
+    st.session_state.success_msg = None # 顯示完清空
 
-# --- 設定區 (摺疊選單) ---
+if st.session_state.get('error_msg'):
+    st.error(st.session_state.error_msg)
+    st.session_state.error_msg = None
+
+# --- 設定區 ---
 with st.expander("⚙️ 設定 (音效與其他)"):
     selected_sound_name = st.selectbox("選擇確認新增時的音效", list(SOUND_MAP.keys()), index=1)
     st.session_state.selected_sound_url = SOUND_MAP[selected_sound_name]
 
-# 主要分頁
+# 載入資料
+df = load_data()
+
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 ===
+# === 功能一：手動記帳 (使用 Callback 模式) ===
 with tab_manual:
-    date_input = st.date_input("選擇日期", datetime.now())
-    col1, col2 = st.columns([2, 1.2])
+    # 這裡綁定 key="date_input"，讓 callback 可以抓到值
+    date_input = st.date_input("選擇日期", datetime.now(), key="date_input")
     
-    # 🆕 關鍵修改：加入 key 參數，讓我們可以透過程式碼控制它
+    col1, col2 = st.columns([2, 1.2])
     with col1:
-        # 如果 session_state 還沒有這個 key，初始化它
-        if "input_item" not in st.session_state:
-            st.session_state.input_item = ""
-        item_input = st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
+        # 這裡綁定 key="input_item"
+        if "input_item" not in st.session_state: st.session_state.input_item = ""
+        st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
         
     with col2:
-        if "input_amount" not in st.session_state:
-            st.session_state.input_amount = ""
-        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", value="", key="input_amount")
+        # 這裡綁定 key="input_amount"
+        if "input_amount" not in st.session_state: st.session_state.input_amount = ""
+        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", key="input_amount")
 
+    # 即時計算 LCD
     preview_val = safe_calculate(amount_input)
     display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
 
     st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
 
-    if st.button("✅ 確認新增", type="primary", use_container_width=True):
-        if item_input and preview_val > 0:
-            new_data = pd.DataFrame({
-                '日期': [date_input],
-                '購物細項': [item_input],
-                '金額': [int(preview_val)]
-            })
-            df = pd.concat([df, new_data], ignore_index=True)
-            save_data(df)
-            st.success(f"已儲存：{item_input} ${int(preview_val)}")
-            
-            # 觸發音效
-            st.session_state.trigger_sound_play = True
-            
-            # 🆕 關鍵修改：清空輸入欄位
-            # 我們直接修改 session_state 對應的 key，下次 rerun 時欄位就會變空
-            st.session_state.input_item = ""
-            st.session_state.input_amount = ""
-            
-            st.rerun()
-        elif preview_val == 0 and amount_input:
-            st.error("算式錯誤，請檢查輸入")
-        else:
-            st.error("請輸入完整的項目名稱與金額")
+    # 🆕 按鈕使用 on_click 呼叫 callback，不直接寫邏輯
+    st.button("✅ 確認新增", type="primary", use_container_width=True, on_click=add_record_callback)
 
 # === 功能二：匯入雲端發票 ===
 with tab_import:
@@ -268,9 +260,9 @@ with tab_import:
                     except: continue
                 if new_records:
                     new_df = pd.DataFrame(new_records)
-                    df = pd.concat([df, new_df], ignore_index=True)
-                    save_data(df)
-                    st.success(f"成功匯入 {len(new_records)} 筆！")
+                    df = pd.concat([load_data(), new_df], ignore_index=True)
+                    save_data_to_sheet(df)
+                    st.session_state.success_msg = f"成功匯入 {len(new_records)} 筆！"
                     st.session_state.trigger_sound_play = True
                     st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
@@ -305,9 +297,7 @@ if not df.empty:
                 c3.write(f"${row['金額']}")
                 unique_key = f"del_{tab_name}_{row['index']}"
                 if c4.button("刪除", key=unique_key, type="secondary"):
-                    global df 
-                    df = df.drop(row['index'])
-                    save_data(df)
+                    save_data_to_sheet(df.drop(row['index']))
                     st.warning(f"已刪除：{row['購物細項']}")
                     st.rerun()
 
