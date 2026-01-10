@@ -6,10 +6,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # 設定頁面
-st.set_page_config(page_title="雲端記帳 App", layout="centered")
+st.set_page_config(page_title="DRKKY 雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?usp=sharing" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
 
 # --- CSS 優化 (手機版型 + LCD 螢幕樣式) ---
 st.markdown("""
@@ -41,7 +41,7 @@ st.markdown("""
         margin-bottom: 15px;
         border: 2px solid #555;
         box-shadow: inset 0 0 10px #000;
-        text-shadow: 0 0 5px #00FF41; /* 增加一點螢光暈開的感覺 */
+        text-shadow: 0 0 5px #00FF41;
     }
     
     .lcd-label {
@@ -90,7 +90,6 @@ def save_data(df):
 # --- 2. 算式計算邏輯 ---
 def safe_calculate(expression):
     try:
-        # 只允許簡單數學運算字元，防止惡意代碼
         allowed = "0123456789.+-*/() "
         if not all(c in allowed for c in str(expression)):
             return 0
@@ -98,7 +97,7 @@ def safe_calculate(expression):
     except:
         return 0
 
-# --- 3. Excel 匯出 (維持不變) ---
+# --- 3. Excel 匯出 ---
 def generate_custom_excel(df):
     output = io.BytesIO()
     if df.empty: return None
@@ -158,27 +157,23 @@ def generate_custom_excel(df):
     return output
 
 # --- 4. App 介面 ---
-st.title("💰 DRKKY雲端記帳本")
+st.title("💰 雲端記帳本")
 
 df = load_data()
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 (鍵盤輸入 + LCD 預覽) ===
+# === 功能一：手動記帳 ===
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
-    
-    # 欄位配置：細項(左) | 金額輸入(右)
     col1, col2 = st.columns([2, 1.2])
     with col1:
         item_input = st.text_input("購物細項", placeholder="例如：午餐")
     with col2:
         amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", value="")
 
-    # 即時計算預覽值
     preview_val = safe_calculate(amount_input)
     display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
 
-    # LCD 螢幕顯示區 (顯示計算結果)
     st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
 
@@ -192,10 +187,6 @@ with tab_manual:
             df = pd.concat([df, new_data], ignore_index=True)
             save_data(df)
             st.success(f"已儲存：{item_input} ${int(preview_val)}")
-            
-            # 使用 session state 強制重新整理並清空欄位有點困難，
-            # 這裡使用 st.rerun() 讓畫面刷新，不過輸入框的字需要手動清除或用進階方法
-            # 簡單起見，我們直接刷新頁面
             st.rerun()
         elif preview_val == 0 and amount_input:
             st.error("算式錯誤，請檢查輸入")
@@ -242,7 +233,8 @@ if not df.empty:
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     
-    tab1, tab2, tab3 = st.tabs(["📅 今日總計", "🗓️ 本周總計", "📊 本月總計"])
+    # 🆕 新增第四個分頁：🔍 自訂
+    tab1, tab2, tab3, tab4 = st.tabs(["📅 今日", "🗓️ 本周", "📊 本月", "🔍 自訂"])
     
     def display_filtered_records(filtered_df, tab_name):
         if filtered_df.empty:
@@ -278,6 +270,25 @@ if not df.empty:
         df['dt_temp'] = pd.to_datetime(df['日期'])
         df_month = df[(df['dt_temp'].dt.year == today.year) & (df['dt_temp'].dt.month == today.month)]
         display_filtered_records(df_month, "本月")
+    
+    # 🆕 自訂日期搜尋功能
+    with tab4:
+        st.write("請選擇查詢區間：")
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            # 預設開始日期為本月 1 號
+            start_date = st.date_input("開始日期", today.replace(day=1))
+        with d_col2:
+            # 預設結束日期為今天
+            end_date = st.date_input("結束日期", today)
+            
+        if start_date > end_date:
+            st.error("開始日期不能晚於結束日期！")
+        else:
+            # 篩選區間
+            df_custom = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
+            st.markdown("---")
+            display_filtered_records(df_custom, "搜尋區間")
 
     st.markdown("---")
     excel_data = generate_custom_excel(df)
