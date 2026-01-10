@@ -9,6 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
+# 請確認這裡已經是你的正確網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
 
 # --- CSS 優化 (手機版型 + LCD 螢幕樣式) ---
@@ -159,36 +160,34 @@ def generate_custom_excel(df):
 # --- 4. App 介面開始 ---
 st.title("💰 DRKKY雲端記帳本")
 
-# --- 🆕 音效處理邏輯 (放在最前面以確保重整後能播放) ---
-# 定義音效連結
+# --- 音效處理邏輯 ---
+# 擴充音效庫
 SOUND_MAP = {
     "無聲": None,
     "🔔 清脆叮聲": "https://www.soundjay.com/buttons/sounds/button-3.mp3",
     "💰 收銀機聲": "https://www.soundjay.com/misc/sounds/coins-in-hand-2.mp3",
-    "🎮 遊戲過關": "https://www.soundjay.com/human/sounds/applause-01.mp3"
+    "🎮 遊戲過關": "https://www.soundjay.com/human/sounds/applause-01.mp3",
+    "🪙 金幣掉落": "https://www.soundjay.com/misc/sounds/magic-chime-01.mp3",
+    "✨ 魔法音效": "https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3",
+    "🎹 鋼琴和弦": "https://www.soundjay.com/buttons/sounds/button-10.mp3"
 }
 
-# 檢查是否需要播放音效
 if st.session_state.get('trigger_sound_play'):
     sound_url = st.session_state.get('selected_sound_url')
     if sound_url:
-        # 嵌入隱藏的 Audio 標籤並自動播放
         st.markdown(f"""
             <audio autoplay style="display:none;">
                 <source src="{sound_url}" type="audio/mpeg">
             </audio>
         """, unsafe_allow_html=True)
-    # 播放完畢後重置狀態
     st.session_state.trigger_sound_play = False
 
 # 載入資料
 df = load_data()
 
-# --- 🆕 設定區 (摺疊選單) ---
+# --- 設定區 (摺疊選單) ---
 with st.expander("⚙️ 設定 (音效與其他)"):
-    # 讓使用者選擇音效，預設為清脆叮聲
     selected_sound_name = st.selectbox("選擇確認新增時的音效", list(SOUND_MAP.keys()), index=1)
-    # 將選擇存入 session 以便按鈕觸發時使用
     st.session_state.selected_sound_url = SOUND_MAP[selected_sound_name]
 
 # 主要分頁
@@ -198,10 +197,18 @@ tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發�
 with tab_manual:
     date_input = st.date_input("選擇日期", datetime.now())
     col1, col2 = st.columns([2, 1.2])
+    
+    # 🆕 關鍵修改：加入 key 參數，讓我們可以透過程式碼控制它
     with col1:
-        item_input = st.text_input("購物細項", placeholder="例如：午餐")
+        # 如果 session_state 還沒有這個 key，初始化它
+        if "input_item" not in st.session_state:
+            st.session_state.input_item = ""
+        item_input = st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
+        
     with col2:
-        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", value="")
+        if "input_amount" not in st.session_state:
+            st.session_state.input_amount = ""
+        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", value="", key="input_amount")
 
     preview_val = safe_calculate(amount_input)
     display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
@@ -220,10 +227,14 @@ with tab_manual:
             save_data(df)
             st.success(f"已儲存：{item_input} ${int(preview_val)}")
             
-            # 🆕 設定觸發音效的 Flag
+            # 觸發音效
             st.session_state.trigger_sound_play = True
             
-            # 重新整理頁面 (這會觸發最上方的音效播放邏輯)
+            # 🆕 關鍵修改：清空輸入欄位
+            # 我們直接修改 session_state 對應的 key，下次 rerun 時欄位就會變空
+            st.session_state.input_item = ""
+            st.session_state.input_amount = ""
+            
             st.rerun()
         elif preview_val == 0 and amount_input:
             st.error("算式錯誤，請檢查輸入")
@@ -260,7 +271,6 @@ with tab_import:
                     df = pd.concat([df, new_df], ignore_index=True)
                     save_data(df)
                     st.success(f"成功匯入 {len(new_records)} 筆！")
-                    # 匯入成功也觸發音效
                     st.session_state.trigger_sound_play = True
                     st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
@@ -273,7 +283,6 @@ if not df.empty:
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     
-    # 五大分頁
     tab_specific, tab_today, tab_week, tab_month, tab_custom = st.tabs(
         ["📅 特定日期", "☀️ 今日", "🗓️ 本周", "📊 本月", "🔍 自訂區間"]
     )
