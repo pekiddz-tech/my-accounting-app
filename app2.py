@@ -27,8 +27,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 連線 Google Sheets (加入快取，讓速度變快！) ---
-@st.cache_resource(ttl=600) # 快取連線物件，避免每次按按鈕都重新連線
+# --- 1. 連線與資料處理 ---
+@st.cache_resource(ttl=600)
 def connect_to_sheet():
     try:
         scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
@@ -41,7 +41,6 @@ def connect_to_sheet():
         st.error(f"連線失敗: {e}")
         return None
 
-# 讀取資料不快取，因為需要即時更新
 def load_data():
     sheet = connect_to_sheet()
     if sheet:
@@ -54,7 +53,6 @@ def load_data():
         except: return pd.DataFrame(columns=['日期', '購物細項', '金額'])
     return pd.DataFrame(columns=['日期', '購物細項', '金額'])
 
-# 存檔函數
 def save_data_to_sheet(df):
     sheet = connect_to_sheet()
     if sheet:
@@ -63,7 +61,7 @@ def save_data_to_sheet(df):
         sheet.clear()
         sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
 
-# --- 2. 核心邏輯函數 ---
+# --- 2. 邏輯函數 ---
 def safe_calculate(expression):
     try:
         allowed = "0123456789.+-*/() "
@@ -71,43 +69,40 @@ def safe_calculate(expression):
         return float(eval(str(expression)))
     except: return 0
 
-# --- 🆕 關鍵：新增資料的回呼函數 (Callback) ---
+# --- 🆕 Callback 1: 新增資料 ---
 def add_record_callback():
-    # 從 session_state 抓取目前輸入的值
     date_val = st.session_state.date_input
     item_val = st.session_state.input_item
     amount_str = st.session_state.input_amount
-    
-    # 計算金額
     calc_val = safe_calculate(amount_str)
     
     if item_val and calc_val > 0:
-        # 1. 讀取舊資料
         current_df = load_data()
-        
-        # 2. 建立新資料
-        new_row = pd.DataFrame({
-            '日期': [date_val],
-            '購物細項': [item_val],
-            '金額': [int(calc_val)]
-        })
-        
-        # 3. 合併並存檔
+        new_row = pd.DataFrame({'日期': [date_val], '購物細項': [item_val], '金額': [int(calc_val)]})
         updated_df = pd.concat([current_df, new_row], ignore_index=True)
         save_data_to_sheet(updated_df)
         
-        # 4. 設定成功訊息與音效觸發 (存入 Session State 供下一次渲染使用)
         st.session_state.success_msg = f"已儲存：{item_val} ${int(calc_val)}"
-        st.session_state.trigger_sound_play = True
+        st.session_state.trigger_add_sound = True # 觸發新增音效
         
-        # 5. ✨ 直接清空輸入欄位 (這就是順暢的關鍵)
+        # 清空欄位
         st.session_state.input_item = ""
         st.session_state.input_amount = ""
-        
     elif calc_val == 0 and amount_str:
-        st.session_state.error_msg = "算式錯誤，請檢查輸入"
+        st.session_state.error_msg = "算式錯誤"
     else:
-        st.session_state.error_msg = "請輸入完整的項目名稱與金額"
+        st.session_state.error_msg = "請輸入完整資料"
+
+# --- 🆕 Callback 2: 刪除資料 ---
+def delete_record_callback(index_to_drop, item_name):
+    current_df = load_data()
+    if index_to_drop in current_df.index:
+        updated_df = current_df.drop(index_to_drop)
+        save_data_to_sheet(updated_df)
+        st.session_state.delete_msg = f"已刪除：{item_name}" # 刪除成功訊息
+        st.session_state.trigger_delete_sound = True # 觸發刪除音效
+    else:
+        st.session_state.error_msg = "資料已變動，請重新整理"
 
 # --- 3. Excel 匯出 ---
 def generate_custom_excel(df):
@@ -120,7 +115,7 @@ def generate_custom_excel(df):
     df['Day'] = df['dt'].dt.day
     target_year = df['Year'].max()
     year_df = df[df['Year'] == target_year]
-
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         sheet = workbook.add_worksheet('年度支出清冊')
@@ -171,7 +166,7 @@ def generate_custom_excel(df):
 # --- 4. App 介面開始 ---
 st.title("💰 DRKKY雲端記帳本")
 
-# --- 音效處理 ---
+# --- 音效資源 ---
 SOUND_MAP = {
     "無聲": None,
     "🔔 清脆叮聲": "https://www.soundjay.com/buttons/sounds/button-3.mp3",
@@ -179,58 +174,69 @@ SOUND_MAP = {
     "🎮 遊戲過關": "https://www.soundjay.com/human/sounds/applause-01.mp3",
     "🪙 金幣掉落": "https://www.soundjay.com/misc/sounds/magic-chime-01.mp3",
     "✨ 魔法音效": "https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3",
-    "🎹 鋼琴和弦": "https://www.soundjay.com/buttons/sounds/button-10.mp3"
+    "🗑️ 垃圾桶聲": "https://www.soundjay.com/misc/sounds/crumpling-paper-1.mp3",
+    "💨 咻一聲": "https://www.soundjay.com/misc/sounds/whip-whoosh-01.mp3"
 }
 
-# 處理音效播放與訊息顯示 (放在最上面)
-if st.session_state.get('trigger_sound_play'):
-    sound_url = st.session_state.get('selected_sound_url')
+# --- 播放音效邏輯 (放在最上面) ---
+# 1. 新增音效
+if st.session_state.get('trigger_add_sound'):
+    sound_url = st.session_state.get('selected_add_sound_url')
     if sound_url:
         st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
-    st.session_state.trigger_sound_play = False
+    st.session_state.trigger_add_sound = False
 
+# 2. 刪除音效
+if st.session_state.get('trigger_delete_sound'):
+    sound_url = st.session_state.get('selected_delete_sound_url')
+    if sound_url:
+        st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
+    st.session_state.trigger_delete_sound = False
+
+# 顯示成功/刪除訊息
 if st.session_state.get('success_msg'):
     st.success(st.session_state.success_msg)
-    st.session_state.success_msg = None # 顯示完清空
-
+    st.session_state.success_msg = None
+if st.session_state.get('delete_msg'):
+    st.warning(st.session_state.delete_msg)
+    st.session_state.delete_msg = None
 if st.session_state.get('error_msg'):
     st.error(st.session_state.error_msg)
     st.session_state.error_msg = None
 
-# --- 設定區 ---
-with st.expander("⚙️ 設定 (音效與其他)"):
-    selected_sound_name = st.selectbox("選擇確認新增時的音效", list(SOUND_MAP.keys()), index=1)
-    st.session_state.selected_sound_url = SOUND_MAP[selected_sound_name]
-
 # 載入資料
 df = load_data()
 
+# --- 設定區 ---
+with st.expander("⚙️ 設定 (音效)"):
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        add_sound_name = st.selectbox("新增成功音效", list(SOUND_MAP.keys()), index=1)
+        st.session_state.selected_add_sound_url = SOUND_MAP[add_sound_name]
+    with col_s2:
+        # 預設刪除音效為垃圾桶聲
+        del_sound_name = st.selectbox("刪除資料音效", list(SOUND_MAP.keys()), index=5) 
+        st.session_state.selected_delete_sound_url = SOUND_MAP[del_sound_name]
+
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 (使用 Callback 模式) ===
+# === 功能一：手動記帳 ===
 with tab_manual:
-    # 這裡綁定 key="date_input"，讓 callback 可以抓到值
     date_input = st.date_input("選擇日期", datetime.now(), key="date_input")
-    
     col1, col2 = st.columns([2, 1.2])
     with col1:
-        # 這裡綁定 key="input_item"
         if "input_item" not in st.session_state: st.session_state.input_item = ""
         st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
-        
     with col2:
-        # 這裡綁定 key="input_amount"
         if "input_amount" not in st.session_state: st.session_state.input_amount = ""
         amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", key="input_amount")
 
-    # 即時計算 LCD
     preview_val = safe_calculate(amount_input)
     display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
 
     st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
 
-    # 🆕 按鈕使用 on_click 呼叫 callback，不直接寫邏輯
     st.button("✅ 確認新增", type="primary", use_container_width=True, on_click=add_record_callback)
 
 # === 功能二：匯入雲端發票 ===
@@ -263,7 +269,7 @@ with tab_import:
                     df = pd.concat([load_data(), new_df], ignore_index=True)
                     save_data_to_sheet(df)
                     st.session_state.success_msg = f"成功匯入 {len(new_records)} 筆！"
-                    st.session_state.trigger_sound_play = True
+                    st.session_state.trigger_add_sound = True # 匯入也用新增音效
                     st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
 
@@ -295,11 +301,16 @@ if not df.empty:
                 c1.write(f"{row['日期']}")
                 c2.write(f"{row['購物細項']}")
                 c3.write(f"${row['金額']}")
+                
+                # 刪除按鈕綁定 Callback
                 unique_key = f"del_{tab_name}_{row['index']}"
-                if c4.button("刪除", key=unique_key, type="secondary"):
-                    save_data_to_sheet(df.drop(row['index']))
-                    st.warning(f"已刪除：{row['購物細項']}")
-                    st.rerun()
+                st.button(
+                    "刪除", 
+                    key=unique_key, 
+                    type="secondary", 
+                    on_click=delete_record_callback,
+                    args=(row['index'], row['購物細項']) # 傳遞參數給 callback
+                )
 
     with tab_specific:
         st.write("選擇想查詢的那一天：")
