@@ -6,7 +6,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # 設定頁面
-st.set_page_config(page_title="DRKKY 雲端記帳 App", layout="centered")
+st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
@@ -156,10 +156,42 @@ def generate_custom_excel(df):
         sheet.write(current_row, 2, grand_total, fmt_total)
     return output
 
-# --- 4. App 介面 ---
-st.title("💰 雲端記帳本")
+# --- 4. App 介面開始 ---
+st.title("💰 DRKKY雲端記帳本")
 
+# --- 🆕 音效處理邏輯 (放在最前面以確保重整後能播放) ---
+# 定義音效連結
+SOUND_MAP = {
+    "無聲": None,
+    "🔔 清脆叮聲": "https://www.soundjay.com/buttons/sounds/button-3.mp3",
+    "💰 收銀機聲": "https://www.soundjay.com/misc/sounds/coins-in-hand-2.mp3",
+    "🎮 遊戲過關": "https://www.soundjay.com/human/sounds/applause-01.mp3"
+}
+
+# 檢查是否需要播放音效
+if st.session_state.get('trigger_sound_play'):
+    sound_url = st.session_state.get('selected_sound_url')
+    if sound_url:
+        # 嵌入隱藏的 Audio 標籤並自動播放
+        st.markdown(f"""
+            <audio autoplay style="display:none;">
+                <source src="{sound_url}" type="audio/mpeg">
+            </audio>
+        """, unsafe_allow_html=True)
+    # 播放完畢後重置狀態
+    st.session_state.trigger_sound_play = False
+
+# 載入資料
 df = load_data()
+
+# --- 🆕 設定區 (摺疊選單) ---
+with st.expander("⚙️ 設定 (音效與其他)"):
+    # 讓使用者選擇音效，預設為清脆叮聲
+    selected_sound_name = st.selectbox("選擇確認新增時的音效", list(SOUND_MAP.keys()), index=1)
+    # 將選擇存入 session 以便按鈕觸發時使用
+    st.session_state.selected_sound_url = SOUND_MAP[selected_sound_name]
+
+# 主要分頁
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
 # === 功能一：手動記帳 ===
@@ -187,6 +219,11 @@ with tab_manual:
             df = pd.concat([df, new_data], ignore_index=True)
             save_data(df)
             st.success(f"已儲存：{item_input} ${int(preview_val)}")
+            
+            # 🆕 設定觸發音效的 Flag
+            st.session_state.trigger_sound_play = True
+            
+            # 重新整理頁面 (這會觸發最上方的音效播放邏輯)
             st.rerun()
         elif preview_val == 0 and amount_input:
             st.error("算式錯誤，請檢查輸入")
@@ -222,7 +259,10 @@ with tab_import:
                     new_df = pd.DataFrame(new_records)
                     df = pd.concat([df, new_df], ignore_index=True)
                     save_data(df)
-                    st.success(f"成功匯入 {len(new_records)} 筆！"); st.rerun()
+                    st.success(f"成功匯入 {len(new_records)} 筆！")
+                    # 匯入成功也觸發音效
+                    st.session_state.trigger_sound_play = True
+                    st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
 
 # --- 5. 數據統計與顯示 ---
@@ -233,8 +273,10 @@ if not df.empty:
     today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     
-    # 🆕 新增第四個分頁：🔍 自訂
-    tab1, tab2, tab3, tab4 = st.tabs(["📅 今日", "🗓️ 本周", "📊 本月", "🔍 自訂"])
+    # 五大分頁
+    tab_specific, tab_today, tab_week, tab_month, tab_custom = st.tabs(
+        ["📅 特定日期", "☀️ 今日", "🗓️ 本周", "📊 本月", "🔍 自訂區間"]
+    )
     
     def display_filtered_records(filtered_df, tab_name):
         if filtered_df.empty:
@@ -260,35 +302,36 @@ if not df.empty:
                     st.warning(f"已刪除：{row['購物細項']}")
                     st.rerun()
 
-    with tab1:
+    with tab_specific:
+        st.write("選擇想查詢的那一天：")
+        target_date = st.date_input("查詢日期", today)
+        df_target = df[df['日期'] == target_date]
+        st.markdown("---")
+        display_filtered_records(df_target, f"{target_date}")
+
+    with tab_today:
         df_today = df[df['日期'] == today]
         display_filtered_records(df_today, "今日")
-    with tab2:
+
+    with tab_week:
         df_week = df[df['日期'] >= start_of_week]
         display_filtered_records(df_week, "本周")
-    with tab3:
+
+    with tab_month:
         df['dt_temp'] = pd.to_datetime(df['日期'])
         df_month = df[(df['dt_temp'].dt.year == today.year) & (df['dt_temp'].dt.month == today.month)]
         display_filtered_records(df_month, "本月")
     
-    # 🆕 自訂日期搜尋功能
-    with tab4:
-        st.write("請選擇查詢區間：")
+    with tab_custom:
+        st.write("選擇起始與結束日期：")
         d_col1, d_col2 = st.columns(2)
-        with d_col1:
-            # 預設開始日期為本月 1 號
-            start_date = st.date_input("開始日期", today.replace(day=1))
-        with d_col2:
-            # 預設結束日期為今天
-            end_date = st.date_input("結束日期", today)
-            
-        if start_date > end_date:
-            st.error("開始日期不能晚於結束日期！")
+        with d_col1: start_date = st.date_input("開始日期", today.replace(day=1))
+        with d_col2: end_date = st.date_input("結束日期", today)
+        if start_date > end_date: st.error("開始日期不能晚於結束日期！")
         else:
-            # 篩選區間
-            df_custom = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
+            df_range = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
             st.markdown("---")
-            display_filtered_records(df_custom, "搜尋區間")
+            display_filtered_records(df_range, "搜尋區間")
 
     st.markdown("---")
     excel_data = generate_custom_excel(df)
