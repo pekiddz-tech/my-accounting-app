@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxxxx/edit" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
 
 # --- CSS 優化 ---
 st.markdown("""
@@ -191,7 +191,7 @@ def generate_custom_excel(df):
     return output
 
 # --- 4. App 介面開始 ---
-st.title("💰 雲端記帳本")
+st.title("💰 DRKKY雲端記帳本")
 
 # --- 音效資源 ---
 SOUND_MAP = {
