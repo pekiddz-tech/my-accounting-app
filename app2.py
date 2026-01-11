@@ -9,13 +9,13 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="雲端記帳 App", layout="centered")
 
 # --- 設定區 ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1MdOuH0QUDQko6rzZxf94d2SK3dHsnQKav_luJLCJhEo/edit?gid=0#gid=0" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxxxx/edit" 
 
 # --- CSS 優化 ---
 st.markdown("""
 <style>
-    div[data-testid="column"] { min-width: 0 !important; flex: 1 !important; padding: 0 5px !important; }
-    .stButton button { width: 100%; font-weight: bold !important; }
+    div[data-testid="column"] { min-width: 0 !important; flex: 1 !important; padding: 0 3px !important; }
+    .stButton button { width: 100%; font-weight: bold !important; padding: 0.25rem 0.5rem !important; }
     .lcd-screen {
         background-color: #262730; color: #00FF41; padding: 15px; 
         border-radius: 8px; text-align: right; font-size: 32px; 
@@ -69,7 +69,7 @@ def safe_calculate(expression):
         return float(eval(str(expression)))
     except: return 0
 
-# --- 🆕 Callback 1: 新增資料 ---
+# --- Callback: 新增資料 ---
 def add_record_callback():
     date_val = st.session_state.date_input
     item_val = st.session_state.input_item
@@ -83,9 +83,7 @@ def add_record_callback():
         save_data_to_sheet(updated_df)
         
         st.session_state.success_msg = f"已儲存：{item_val} ${int(calc_val)}"
-        st.session_state.trigger_add_sound = True # 觸發新增音效
-        
-        # 清空欄位
+        st.session_state.trigger_add_sound = True
         st.session_state.input_item = ""
         st.session_state.input_amount = ""
     elif calc_val == 0 and amount_str:
@@ -93,16 +91,45 @@ def add_record_callback():
     else:
         st.session_state.error_msg = "請輸入完整資料"
 
-# --- 🆕 Callback 2: 刪除資料 ---
+# --- Callback: 刪除資料 ---
 def delete_record_callback(index_to_drop, item_name):
     current_df = load_data()
     if index_to_drop in current_df.index:
         updated_df = current_df.drop(index_to_drop)
         save_data_to_sheet(updated_df)
-        st.session_state.delete_msg = f"已刪除：{item_name}" # 刪除成功訊息
-        st.session_state.trigger_delete_sound = True # 觸發刪除音效
-    else:
-        st.session_state.error_msg = "資料已變動，請重新整理"
+        st.session_state.delete_msg = f"已刪除：{item_name}"
+        st.session_state.trigger_delete_sound = True
+
+# --- 🆕 Dialog Function: 修改資料視窗 ---
+@st.experimental_dialog("✏️ 修改記錄")
+def edit_record_dialog(index, old_date, old_item, old_amount):
+    st.write("請修改下方的內容：")
+    
+    # 預填舊資料
+    new_date = st.date_input("日期", old_date)
+    new_item = st.text_input("項目", old_item)
+    # 金額轉成字串，方便使用者用算式修改 (例如原本 100，改成 100-20)
+    new_amount_str = st.text_input("金額 (可輸入算式)", str(old_amount))
+    
+    # 計算預覽
+    calc_val = safe_calculate(new_amount_str)
+    st.caption(f"計算結果: ${int(calc_val)}")
+
+    if st.button("💾 儲存修改", type="primary"):
+        if new_item and calc_val > 0:
+            current_df = load_data()
+            # 更新 DataFrame
+            current_df.at[index, '日期'] = new_date
+            current_df.at[index, '購物細項'] = new_item
+            current_df.at[index, '金額'] = int(calc_val)
+            
+            save_data_to_sheet(current_df)
+            
+            st.session_state.success_msg = f"已修改：{new_item} ${int(calc_val)}"
+            st.session_state.trigger_add_sound = True # 修改成功也播叮聲
+            st.rerun()
+        else:
+            st.error("金額必須大於 0 且有名稱")
 
 # --- 3. Excel 匯出 ---
 def generate_custom_excel(df):
@@ -164,7 +191,7 @@ def generate_custom_excel(df):
     return output
 
 # --- 4. App 介面開始 ---
-st.title("💰 DRKKY雲端記帳本")
+st.title("💰 雲端記帳本")
 
 # --- 音效資源 ---
 SOUND_MAP = {
@@ -178,22 +205,18 @@ SOUND_MAP = {
     "💨 咻一聲": "https://www.soundjay.com/misc/sounds/whip-whoosh-01.mp3"
 }
 
-# --- 播放音效邏輯 (放在最上面) ---
-# 1. 新增音效
+# --- 音效播放 ---
 if st.session_state.get('trigger_add_sound'):
     sound_url = st.session_state.get('selected_add_sound_url')
-    if sound_url:
-        st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
+    if sound_url: st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
     st.session_state.trigger_add_sound = False
 
-# 2. 刪除音效
 if st.session_state.get('trigger_delete_sound'):
     sound_url = st.session_state.get('selected_delete_sound_url')
-    if sound_url:
-        st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
+    if sound_url: st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
     st.session_state.trigger_delete_sound = False
 
-# 顯示成功/刪除訊息
+# 訊息顯示
 if st.session_state.get('success_msg'):
     st.success(st.session_state.success_msg)
     st.session_state.success_msg = None
@@ -211,10 +234,9 @@ df = load_data()
 with st.expander("⚙️ 設定 (音效)"):
     col_s1, col_s2 = st.columns(2)
     with col_s1:
-        add_sound_name = st.selectbox("新增成功音效", list(SOUND_MAP.keys()), index=1)
+        add_sound_name = st.selectbox("新增/修改 音效", list(SOUND_MAP.keys()), index=1)
         st.session_state.selected_add_sound_url = SOUND_MAP[add_sound_name]
     with col_s2:
-        # 預設刪除音效為垃圾桶聲
         del_sound_name = st.selectbox("刪除資料音效", list(SOUND_MAP.keys()), index=5) 
         st.session_state.selected_delete_sound_url = SOUND_MAP[del_sound_name]
 
@@ -269,7 +291,7 @@ with tab_import:
                     df = pd.concat([load_data(), new_df], ignore_index=True)
                     save_data_to_sheet(df)
                     st.session_state.success_msg = f"成功匯入 {len(new_records)} 筆！"
-                    st.session_state.trigger_add_sound = True # 匯入也用新增音效
+                    st.session_state.trigger_add_sound = True
                     st.rerun()
         except Exception as e: st.error(f"錯誤：{e}")
 
@@ -293,24 +315,32 @@ if not df.empty:
             st.metric(label=f"{tab_name} 總支出", value=f"${total_amount:,}")
             st.write("📋 **詳細清單**")
             display_df = filtered_df.sort_values('日期', ascending=False).reset_index()
-            h1, h2, h3, h4 = st.columns([2.5, 3.5, 2, 2])
-            h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**操作**")
+            
+            # 調整欄位比例：加入修改按鈕的空間
+            h1, h2, h3, h4, h5 = st.columns([2.5, 3, 2, 1.2, 1.2])
+            h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**修改**"); h5.write("**刪除**")
 
             for i, row in display_df.iterrows():
-                c1, c2, c3, c4 = st.columns([2.5, 3.5, 2, 2])
+                c1, c2, c3, c4, c5 = st.columns([2.5, 3, 2, 1.2, 1.2])
                 c1.write(f"{row['日期']}")
                 c2.write(f"{row['購物細項']}")
                 c3.write(f"${row['金額']}")
                 
-                # 刪除按鈕綁定 Callback
-                unique_key = f"del_{tab_name}_{row['index']}"
+                # ✏️ 修改按鈕
+                if c4.button("✏️", key=f"edit_{tab_name}_{row['index']}"):
+                    edit_record_dialog(row['index'], row['日期'], row['購物細項'], row['金額'])
+
+                # 🗑️ 刪除按鈕
                 st.button(
-                    "刪除", 
-                    key=unique_key, 
-                    type="secondary", 
+                    "🗑️", 
+                    key=f"del_{tab_name}_{row['index']}", 
+                    type="secondary",
                     on_click=delete_record_callback,
-                    args=(row['index'], row['購物細項']) # 傳遞參數給 callback
+                    args=(row['index'], row['購物細項'])
                 )
+                
+                # 為了手機排版，最後一個 column 放個空
+                # c5 已經自動由刪除按鈕佔據
 
     with tab_specific:
         st.write("選擇想查詢的那一天：")
