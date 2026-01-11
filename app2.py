@@ -24,6 +24,16 @@ st.markdown("""
         box-shadow: inset 0 0 10px #000; text-shadow: 0 0 5px #00FF41;
     }
     .lcd-label { color: #888; font-size: 12px; text-align: right; margin-bottom: -10px; margin-right: 5px; }
+    
+    /* 修改模式的特殊樣式 */
+    .edit-mode-box {
+        background-color: #FFF4E5; /* 淺橘色背景 */
+        padding: 15px;
+        border-radius: 10px;
+        border: 2px solid #FF8C00;
+        margin-bottom: 20px;
+        color: #333;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -100,36 +110,40 @@ def delete_record_callback(index_to_drop, item_name):
         st.session_state.delete_msg = f"已刪除：{item_name}"
         st.session_state.trigger_delete_sound = True
 
-# --- 🆕 Dialog Function: 修改資料視窗 ---
-@st.experimental_dialog("✏️ 修改記錄")
-def edit_record_dialog(index, old_date, old_item, old_amount):
-    st.write("請修改下方的內容：")
-    
-    # 預填舊資料
-    new_date = st.date_input("日期", old_date)
-    new_item = st.text_input("項目", old_item)
-    # 金額轉成字串，方便使用者用算式修改 (例如原本 100，改成 100-20)
-    new_amount_str = st.text_input("金額 (可輸入算式)", str(old_amount))
-    
-    # 計算預覽
-    calc_val = safe_calculate(new_amount_str)
-    st.caption(f"計算結果: ${int(calc_val)}")
+# --- Callback: 進入修改模式 ---
+def enter_edit_mode(index, date, item, amount):
+    st.session_state.edit_index = index
+    st.session_state.edit_date = date
+    st.session_state.edit_item = item
+    st.session_state.edit_amount = str(amount) # 轉字串方便編輯
 
-    if st.button("💾 儲存修改", type="primary"):
-        if new_item and calc_val > 0:
-            current_df = load_data()
-            # 更新 DataFrame
-            current_df.at[index, '日期'] = new_date
-            current_df.at[index, '購物細項'] = new_item
-            current_df.at[index, '金額'] = int(calc_val)
-            
-            save_data_to_sheet(current_df)
-            
-            st.session_state.success_msg = f"已修改：{new_item} ${int(calc_val)}"
-            st.session_state.trigger_add_sound = True # 修改成功也播叮聲
-            st.rerun()
-        else:
-            st.error("金額必須大於 0 且有名稱")
+# --- Callback: 儲存修改 ---
+def save_edit_callback():
+    idx = st.session_state.edit_index
+    new_date = st.session_state.edit_date_input
+    new_item = st.session_state.edit_item_input
+    new_amount_str = st.session_state.edit_amount_input
+    
+    calc_val = safe_calculate(new_amount_str)
+    
+    if new_item and calc_val > 0:
+        current_df = load_data()
+        current_df.at[idx, '日期'] = new_date
+        current_df.at[idx, '購物細項'] = new_item
+        current_df.at[idx, '金額'] = int(calc_val)
+        save_data_to_sheet(current_df)
+        
+        st.session_state.success_msg = f"已修改：{new_item} ${int(calc_val)}"
+        st.session_state.trigger_add_sound = True
+        
+        # 退出修改模式
+        st.session_state.edit_index = None
+    else:
+        st.session_state.error_msg = "金額必須大於 0 且有名稱"
+
+# --- Callback: 取消修改 ---
+def cancel_edit():
+    st.session_state.edit_index = None
 
 # --- 3. Excel 匯出 ---
 def generate_custom_excel(df):
@@ -205,7 +219,7 @@ SOUND_MAP = {
     "💨 咻一聲": "https://www.soundjay.com/misc/sounds/whip-whoosh-01.mp3"
 }
 
-# --- 音效播放 ---
+# 音效播放邏輯
 if st.session_state.get('trigger_add_sound'):
     sound_url = st.session_state.get('selected_add_sound_url')
     if sound_url: st.markdown(f'<audio autoplay style="display:none;"><source src="{sound_url}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
@@ -230,7 +244,7 @@ if st.session_state.get('error_msg'):
 # 載入資料
 df = load_data()
 
-# --- 設定區 ---
+# 設定區
 with st.expander("⚙️ 設定 (音效)"):
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -242,24 +256,47 @@ with st.expander("⚙️ 設定 (音效)"):
 
 tab_manual, tab_import = st.tabs(["📝 手動記帳", "☁️ 匯入雲端發票"])
 
-# === 功能一：手動記帳 ===
+# === 功能一：手動記帳 (含新增與修改模式) ===
 with tab_manual:
-    date_input = st.date_input("選擇日期", datetime.now(), key="date_input")
-    col1, col2 = st.columns([2, 1.2])
-    with col1:
-        if "input_item" not in st.session_state: st.session_state.input_item = ""
-        st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
-    with col2:
-        if "input_amount" not in st.session_state: st.session_state.input_amount = ""
-        amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", key="input_amount")
+    
+    # 判斷是否處於「修改模式」
+    if st.session_state.get('edit_index') is not None:
+        # === 修改模式介面 ===
+        st.markdown('<div class="edit-mode-box">✏️ 正在修改資料...</div>', unsafe_allow_html=True)
+        
+        edit_date = st.date_input("日期", st.session_state.edit_date, key="edit_date_input")
+        
+        c1, c2 = st.columns([2, 1.2])
+        with c1:
+            st.text_input("購物細項", value=st.session_state.edit_item, key="edit_item_input")
+        with c2:
+            st.text_input("金額 (可輸入算式)", value=st.session_state.edit_amount, key="edit_amount_input")
+            
+        # 按鈕區
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            st.button("💾 儲存修改", type="primary", use_container_width=True, on_click=save_edit_callback)
+        with bc2:
+            st.button("❌ 取消", use_container_width=True, on_click=cancel_edit)
 
-    preview_val = safe_calculate(amount_input)
-    display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
+    else:
+        # === 正常新增模式 ===
+        date_input = st.date_input("選擇日期", datetime.now(), key="date_input")
+        col1, col2 = st.columns([2, 1.2])
+        with col1:
+            if "input_item" not in st.session_state: st.session_state.input_item = ""
+            st.text_input("購物細項", placeholder="例如：午餐", key="input_item")
+        with col2:
+            if "input_amount" not in st.session_state: st.session_state.input_amount = ""
+            amount_input = st.text_input("輸入金額或算式", placeholder="如: 50+20", key="input_amount")
 
-    st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
+        preview_val = safe_calculate(amount_input)
+        display_text = f"{int(preview_val)}" if preview_val > 0 else "0"
 
-    st.button("✅ 確認新增", type="primary", use_container_width=True, on_click=add_record_callback)
+        st.markdown(f'<div class="lcd-label">Total Amount</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="lcd-screen">{display_text}</div>', unsafe_allow_html=True)
+
+        st.button("✅ 確認新增", type="primary", use_container_width=True, on_click=add_record_callback)
 
 # === 功能二：匯入雲端發票 ===
 with tab_import:
@@ -316,7 +353,6 @@ if not df.empty:
             st.write("📋 **詳細清單**")
             display_df = filtered_df.sort_values('日期', ascending=False).reset_index()
             
-            # 調整欄位比例：加入修改按鈕的空間
             h1, h2, h3, h4, h5 = st.columns([2.5, 3, 2, 1.2, 1.2])
             h1.write("**日期**"); h2.write("**項目**"); h3.write("**金額**"); h4.write("**修改**"); h5.write("**刪除**")
 
@@ -326,21 +362,22 @@ if not df.empty:
                 c2.write(f"{row['購物細項']}")
                 c3.write(f"${row['金額']}")
                 
-                # ✏️ 修改按鈕
-                if c4.button("✏️", key=f"edit_{tab_name}_{row['index']}"):
-                    edit_record_dialog(row['index'], row['日期'], row['購物細項'], row['金額'])
+                # 修改按鈕 (使用 Callback 模式，不依賴 experimental_dialog)
+                c4.button(
+                    "✏️", 
+                    key=f"edit_{tab_name}_{row['index']}", 
+                    on_click=enter_edit_mode,
+                    args=(row['index'], row['日期'], row['購物細項'], row['金額'])
+                )
 
-                # 🗑️ 刪除按鈕
-                st.button(
+                # 刪除按鈕
+                c5.button(
                     "🗑️", 
                     key=f"del_{tab_name}_{row['index']}", 
                     type="secondary",
                     on_click=delete_record_callback,
                     args=(row['index'], row['購物細項'])
                 )
-                
-                # 為了手機排版，最後一個 column 放個空
-                # c5 已經自動由刪除按鈕佔據
 
     with tab_specific:
         st.write("選擇想查詢的那一天：")
